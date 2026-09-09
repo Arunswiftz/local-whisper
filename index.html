@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Local Whisper - Speech to Text</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <script type="module" src="app.js"></script>
+</head>
+
+<body>
+
+    <main class="container">
+
+        <header>
+            <div class="logo">🎙️</div>
+            <h1>Local Whisper</h1>
+            <p>Private speech-to-text running in your browser.</p>
+        </header>
+
+        <section class="card">
+
+            <div id="dropZone" class="drop-zone">
+
+                <div class="upload-icon">📁</div>
+
+                <h2>Drop your audio file here</h2>
+
+                <p>or</p>
+
+                <label class="button secondary">
+                    Choose Audio
+                    <input
+                        type="file"
+                        id="audioFile"
+                        accept="audio/*,video/*"
+                        hidden
+                    >
+                </label>
+
+                <p class="supported">
+                    MP3 · WAV · M4A · FLAC · MP4
+                </p>
+
+            </div>
+
+            <div id="fileInfo" class="file-info hidden">
+                <span>🎵</span>
+                <div>
+                    <strong id="fileName"></strong>
+                    <small id="fileSize"></small>
+                </div>
+                <button id="removeFile">✕</button>
+            </div>
+
+            <div class="settings">
+
+                <div class="setting">
+                    <label for="language">Language</label>
+
+                    <select id="language">
+                        <option value="en">English</option>
+                        <option value="auto">Auto Detect</option>
+                        <option value="hi">Hindi</option>
+                        <option value="ta">Tamil</option>
+                        <option value="te">Telugu</option>
+                        <option value="ml">Malayalam</option>
+                        <option value="kn">Kannada</option>
+                        <option value="bn">Bengali</option>
+                        <option value="mr">Marathi</option>
+                    </select>
+                </div>
+
+                <div class="setting">
+                    <label for="model">Model</label>
+
+                    <select id="model">
+                        <option value="tiny.en">
+                            Tiny English — Fast
+                        </option>
+
+                        <option value="tiny">
+                            Tiny Multilingual
+                        </option>
+                    </select>
+                </div>
+
+            </div>
+
+            <button id="transcribeButton" class="button primary" disabled>
+                🎙️ Transcribe
+            </button>
+
+            <div id="progressArea" class="progress-area hidden">
+
+                <div class="status" id="status">
+                    Loading model...
+                </div>
+
+                <div class="progress-bar">
+                    <div id="progressBar"></div>
+                </div>
+
+            </div>
+
+        </section>
+
+        <section id="resultSection" class="card result hidden">
+
+            <div class="result-header">
+                <div>
+                    <h2>Transcription</h2>
+                    <p id="resultStatus"></p>
+                </div>
+            </div>
+
+            <textarea
+                id="transcription"
+                placeholder="Your transcription will appear here..."
+            ></textarea>
+
+            <div class="actions">
+
+                <button id="downloadTxt" class="button primary">
+                    ⬇ Download TXT
+                </button>
+
+                <button id="downloadSrt" class="button secondary">
+                    ⬇ Download SRT
+                </button>
+
+            </div>
+
+        </section>
+
+        <footer>
+
+            <p>
+                🔒 Audio is processed locally in your browser.
+            </p>
+
+            <p>
+                Powered by Whisper + Transformers.js
+            </p>
+
+        </footer>
+
+    </main>
+
+</body>
+</html>
