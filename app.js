@@ -1,26 +1,10 @@
-// =====================================================
-// LOCAL WHISPER - Browser Speech-to-Text
-// =====================================================
-
 import {
-    pipeline,
-    env
-} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
+    pipeline
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
 
 // =====================================================
-// Configuration
-// =====================================================
-
-// Allow models to be downloaded from Hugging Face
-env.allowLocalModels = false;
-
-// Cache downloaded models in the browser
-env.useBrowserCache = true;
-
-
-// =====================================================
-// HTML elements
+// ELEMENTS
 // =====================================================
 
 const audioFile =
@@ -40,9 +24,6 @@ const removeFile =
 
 const transcribeButton =
     document.getElementById("transcribeButton");
-
-const dropZone =
-    document.getElementById("dropZone");
 
 const progressArea =
     document.getElementById("progressArea");
@@ -65,34 +46,23 @@ const resultStatus =
 const downloadTxt =
     document.getElementById("downloadTxt");
 
-const downloadSrt =
-    document.getElementById("downloadSrt");
-
-const language =
-    document.getElementById("language");
-
-const modelSelect =
-    document.getElementById("model");
-
 
 // =====================================================
-// Variables
+// VARIABLES
 // =====================================================
 
 let selectedFile = null;
 
 let transcriber = null;
 
-let currentModel = null;
-
 
 // =====================================================
-// File selection
+// FILE SELECTION
 // =====================================================
 
 audioFile.addEventListener(
     "change",
-    function (event) {
+    (event) => {
 
         const file =
             event.target.files[0];
@@ -101,53 +71,65 @@ audioFile.addEventListener(
             return;
         }
 
-        handleFile(file);
+        selectedFile =
+            file;
+
+
+        fileName.textContent =
+            file.name;
+
+
+        fileSize.textContent =
+            formatFileSize(
+                file.size
+            );
+
+
+        fileInfo.classList.remove(
+            "hidden"
+        );
+
+
+        transcribeButton.disabled =
+            false;
+
+
+        console.log(
+            "Audio selected:",
+            file.name
+        );
 
     }
 );
 
 
 // =====================================================
-// Handle file
+// REMOVE FILE
 // =====================================================
 
-function handleFile(file) {
+removeFile.addEventListener(
+    "click",
+    () => {
 
-    selectedFile = file;
+        selectedFile =
+            null;
 
-    console.log(
-        "Selected:",
-        file.name,
-        file.type,
-        file.size
-    );
+        audioFile.value =
+            "";
 
+        fileInfo.classList.add(
+            "hidden"
+        );
 
-    fileName.textContent =
-        file.name;
+        transcribeButton.disabled =
+            true;
 
-    fileSize.textContent =
-        formatFileSize(file.size);
-
-
-    fileInfo.classList.remove(
-        "hidden"
-    );
-
-
-    transcribeButton.disabled =
-        false;
-
-
-    dropZone.classList.add(
-        "file-selected"
-    );
-
-}
+    }
+);
 
 
 // =====================================================
-// Format file size
+// FILE SIZE
 // =====================================================
 
 function formatFileSize(bytes) {
@@ -161,14 +143,16 @@ function formatFileSize(bytes) {
     if (bytes < 1024 * 1024) {
 
         return (
-            (bytes / 1024).toFixed(1)
+            (bytes / 1024)
+                .toFixed(1)
             + " KB"
         );
 
     }
 
     return (
-        (bytes / (1024 * 1024)).toFixed(1)
+        (bytes / 1024 / 1024)
+            .toFixed(1)
         + " MB"
     );
 
@@ -176,266 +160,108 @@ function formatFileSize(bytes) {
 
 
 // =====================================================
-// Drag and drop
+// LOAD WHISPER
 // =====================================================
 
-dropZone.addEventListener(
-    "dragover",
-    function (event) {
-
-        event.preventDefault();
-
-        dropZone.classList.add(
-            "dragging"
-        );
-
-    }
-);
-
-
-dropZone.addEventListener(
-    "dragleave",
-    function () {
-
-        dropZone.classList.remove(
-            "dragging"
-        );
-
-    }
-);
-
-
-dropZone.addEventListener(
-    "drop",
-    function (event) {
-
-        event.preventDefault();
-
-        dropZone.classList.remove(
-            "dragging"
-        );
-
-        const file =
-            event.dataTransfer.files[0];
-
-        if (file) {
-
-            handleFile(file);
-
-        }
-
-    }
-);
-
-
-// =====================================================
-// Remove file
-// =====================================================
-
-removeFile.addEventListener(
-    "click",
-    function () {
-
-        selectedFile = null;
-
-        audioFile.value = "";
-
-        fileInfo.classList.add(
-            "hidden"
-        );
-
-        transcribeButton.disabled =
-            true;
-
-        resultSection.classList.add(
-            "hidden"
-        );
-
-    }
-);
-
-
-// =====================================================
-// Load Whisper
-// =====================================================
-
-async function loadWhisper() {
-
-    const selectedModel =
-        modelSelect.value;
-
-
-    // Don't reload the same model
-
-    if (
-        transcriber &&
-        currentModel === selectedModel
-    ) {
-
-        return;
-
-    }
-
-
-    progressArea.classList.remove(
-        "hidden"
-    );
-
+async function createTranscriber() {
 
     status.textContent =
-        "Loading Whisper model...";
-
+        "Loading Whisper...";
 
     progressBar.style.width =
         "10%";
 
 
     console.log(
-        "Loading model:",
-        selectedModel
+        "Loading Whisper model..."
     );
 
 
-    try {
+    // Try WebGPU first
 
-        transcriber =
-            await pipeline(
-                "automatic-speech-recognition",
-
-                `onnx-community/whisper-${selectedModel}`,
-
-                {
-                    device:
-                        "webgpu",
-
-                    dtype:
-                        "q4"
-                }
-            );
-
-
-        currentModel =
-            selectedModel;
-
-
-        progressBar.style.width =
-            "100%";
-
-
-        status.textContent =
-            "Whisper model ready.";
-
-    }
-
-
-    catch (webgpuError) {
-
-        console.warn(
-            "WebGPU failed:",
-            webgpuError
-        );
-
-
-        status.textContent =
-            "WebGPU unavailable. Using CPU...";
-
-
-        progressBar.style.width =
-            "30%";
-
+    if (
+        navigator.gpu
+    ) {
 
         try {
 
-            transcriber =
+            console.log(
+                "Trying WebGPU..."
+            );
+
+
+            const pipe =
                 await pipeline(
                     "automatic-speech-recognition",
-
-                    `onnx-community/whisper-${selectedModel}`,
-
+                    "onnx-community/whisper-tiny.en",
                     {
-                        dtype:
-                            "q4"
+                        device:
+                            "webgpu"
                     }
                 );
 
 
-            currentModel =
-                selectedModel;
-
-
-            progressBar.style.width =
-                "100%";
-
-
-            status.textContent =
-                "Whisper model ready.";
-
-        }
-
-
-        catch (cpuError) {
-
-            console.error(
-                "Whisper failed:",
-                cpuError
+            console.log(
+                "Whisper loaded with WebGPU."
             );
 
 
-            throw cpuError;
+            return pipe;
+
+        }
+
+        catch (error) {
+
+            console.warn(
+                "WebGPU failed.",
+                error
+            );
 
         }
 
     }
 
-}
+
+    // CPU fallback
+
+    console.log(
+        "Using CPU/WASM..."
+    );
 
 
-// =====================================================
-// Decode audio
-// =====================================================
-
-async function decodeAudio(file) {
-
-    const arrayBuffer =
-        await file.arrayBuffer();
+    status.textContent =
+        "WebGPU unavailable. Loading CPU version...";
 
 
-    const audioContext =
-        new AudioContext({
-            sampleRate: 16000
-        });
-
-
-    const audioBuffer =
-        await audioContext.decodeAudioData(
-            arrayBuffer
+    const pipe =
+        await pipeline(
+            "automatic-speech-recognition",
+            "onnx-community/whisper-tiny.en"
         );
 
 
-    const channelData =
-        audioBuffer.getChannelData(0);
+    console.log(
+        "Whisper loaded with CPU."
+    );
 
 
-    await audioContext.close();
-
-
-    return channelData;
+    return pipe;
 
 }
 
 
 // =====================================================
-// Transcribe
+// TRANSCRIBE
 // =====================================================
 
 transcribeButton.addEventListener(
     "click",
-    async function () {
+    async () => {
 
         if (!selectedFile) {
 
             alert(
-                "Please select an audio file first."
+                "Please select an audio file."
             );
 
             return;
@@ -449,18 +275,18 @@ transcribeButton.addEventListener(
                 true;
 
 
-            resultSection.classList.add(
-                "hidden"
-            );
-
-
             progressArea.classList.remove(
                 "hidden"
             );
 
 
+            resultSection.classList.add(
+                "hidden"
+            );
+
+
             status.textContent =
-                "Starting Whisper...";
+                "Starting...";
 
 
             progressBar.style.width =
@@ -468,85 +294,57 @@ transcribeButton.addEventListener(
 
 
             // -----------------------------------------
-            // Load model
+            // Load Whisper
             // -----------------------------------------
 
-            await loadWhisper();
+            if (!transcriber) {
 
-
-            // -----------------------------------------
-            // Decode audio
-            // -----------------------------------------
-
-            status.textContent =
-                "Reading audio...";
-
-
-            progressBar.style.width =
-                "35%";
-
-
-            const audio =
-                await decodeAudio(
-                    selectedFile
-                );
-
-
-            console.log(
-                "Audio samples:",
-                audio.length
-            );
-
-
-            // -----------------------------------------
-            // Options
-            // -----------------------------------------
-
-            const options = {
-
-                return_timestamps:
-                    true,
-
-                chunk_length_s:
-                    30,
-
-                stride_length_s:
-                    5
-
-            };
-
-
-            const selectedLanguage =
-                language.value;
-
-
-            if (
-                selectedLanguage !== "auto"
-            ) {
-
-                options.language =
-                    selectedLanguage;
+                transcriber =
+                    await createTranscriber();
 
             }
-
-
-            // -----------------------------------------
-            // Run Whisper
-            // -----------------------------------------
-
-            status.textContent =
-                "Transcribing...";
 
 
             progressBar.style.width =
                 "50%";
 
 
+            status.textContent =
+                "Transcribing audio...";
+
+
+            // -----------------------------------------
+            // Create temporary URL
+            // -----------------------------------------
+
+            const audioURL =
+                URL.createObjectURL(
+                    selectedFile
+                );
+
+
+            console.log(
+                "Sending audio to Whisper..."
+            );
+
+
+            // -----------------------------------------
+            // Run Whisper
+            // -----------------------------------------
+
             const result =
                 await transcriber(
-                    audio,
-                    options
+                    audioURL,
+                    {
+                        return_timestamps:
+                            true
+                    }
                 );
+
+
+            URL.revokeObjectURL(
+                audioURL
+            );
 
 
             console.log(
@@ -556,7 +354,7 @@ transcribeButton.addEventListener(
 
 
             // -----------------------------------------
-            // Display result
+            // Show transcript
             // -----------------------------------------
 
             transcription.value =
@@ -564,7 +362,7 @@ transcribeButton.addEventListener(
 
 
             resultStatus.textContent =
-                "Transcription completed successfully.";
+                "Transcription completed.";
 
 
             progressBar.style.width =
@@ -580,11 +378,10 @@ transcribeButton.addEventListener(
             );
 
 
-            // Save timestamp chunks
+            // Store chunks for later
 
             window.whisperChunks =
                 result.chunks || [];
-
 
         }
 
@@ -592,13 +389,13 @@ transcribeButton.addEventListener(
         catch (error) {
 
             console.error(
-                "Transcription error:",
+                "TRANSCRIPTION ERROR:",
                 error
             );
 
 
             status.textContent =
-                "Transcription failed.";
+                "Error";
 
 
             progressBar.style.width =
@@ -606,7 +403,7 @@ transcribeButton.addEventListener(
 
 
             alert(
-                "Transcription failed.\n\n" +
+                "Whisper could not transcribe the file.\n\n" +
                 error.message
             );
 
@@ -625,279 +422,66 @@ transcribeButton.addEventListener(
 
 
 // =====================================================
-// Download TXT
+// DOWNLOAD TEXT
 // =====================================================
 
 downloadTxt.addEventListener(
     "click",
-    function () {
+    () => {
 
         const text =
             transcription.value;
 
 
-        downloadFile(
-            text,
-            createFilename(
-                ".txt"
-            ),
-            "text/plain"
+        const blob =
+            new Blob(
+                [text],
+                {
+                    type:
+                        "text/plain"
+                }
+            );
+
+
+        const url =
+            URL.createObjectURL(
+                blob
+            );
+
+
+        const link =
+            document.createElement(
+                "a"
+            );
+
+
+        link.href =
+            url;
+
+
+        link.download =
+            "transcription.txt";
+
+
+        document.body.appendChild(
+            link
+        );
+
+
+        link.click();
+
+
+        link.remove();
+
+
+        URL.revokeObjectURL(
+            url
         );
 
     }
 );
 
-
-// =====================================================
-// Download SRT
-// =====================================================
-
-downloadSrt.addEventListener(
-    "click",
-    function () {
-
-        const chunks =
-            window.whisperChunks || [];
-
-
-        let srt = "";
-
-
-        chunks.forEach(
-            (chunk, index) => {
-
-                if (
-                    !chunk.timestamp ||
-                    chunk.timestamp.length < 2
-                ) {
-
-                    return;
-
-                }
-
-
-                const start =
-                    chunk.timestamp[0];
-
-
-                const end =
-                    chunk.timestamp[1];
-
-
-                if (
-                    start == null ||
-                    end == null
-                ) {
-
-                    return;
-
-                }
-
-
-                srt +=
-                    (index + 1) +
-                    "\n";
-
-
-                srt +=
-                    formatSrtTime(start) +
-                    " --> " +
-                    formatSrtTime(end) +
-                    "\n";
-
-
-                srt +=
-                    (chunk.text || "").trim() +
-                    "\n\n";
-
-            }
-        );
-
-
-        if (!srt.trim()) {
-
-            srt =
-                "1\n" +
-                "00:00:00,000 --> 00:00:10,000\n" +
-                transcription.value.trim() +
-                "\n";
-
-        }
-
-
-        downloadFile(
-            srt,
-            createFilename(
-                ".srt"
-            ),
-            "text/plain"
-        );
-
-    }
-);
-
-
-// =====================================================
-// SRT timestamp
-// =====================================================
-
-function formatSrtTime(seconds) {
-
-    seconds =
-        Math.max(
-            0,
-            seconds
-        );
-
-
-    const hours =
-        Math.floor(
-            seconds / 3600
-        );
-
-
-    const minutes =
-        Math.floor(
-            (seconds % 3600) / 60
-        );
-
-
-    const secs =
-        Math.floor(
-            seconds % 60
-        );
-
-
-    const milliseconds =
-        Math.floor(
-            (seconds % 1) * 1000
-        );
-
-
-    return (
-
-        String(hours).padStart(2, "0")
-
-        + ":" +
-
-        String(minutes).padStart(2, "0")
-
-        + ":" +
-
-        String(secs).padStart(2, "0")
-
-        + "," +
-
-        String(milliseconds).padStart(3, "0")
-
-    );
-
-}
-
-
-// =====================================================
-// Download helper
-// =====================================================
-
-function downloadFile(
-    content,
-    filename,
-    type
-) {
-
-    const blob =
-        new Blob(
-            [content],
-            {
-                type:
-                    type
-            }
-        );
-
-
-    const url =
-        URL.createObjectURL(
-            blob
-        );
-
-
-    const link =
-        document.createElement(
-            "a"
-        );
-
-
-    link.href =
-        url;
-
-
-    link.download =
-        filename;
-
-
-    document.body.appendChild(
-        link
-    );
-
-
-    link.click();
-
-
-    link.remove();
-
-
-    URL.revokeObjectURL(
-        url
-    );
-
-}
-
-
-// =====================================================
-// Filename
-// =====================================================
-
-function createFilename(extension) {
-
-    if (!selectedFile) {
-
-        return (
-            "transcription" +
-            extension
-        );
-
-    }
-
-
-    const original =
-        selectedFile.name;
-
-
-    const dot =
-        original.lastIndexOf(".");
-
-
-    const base =
-        dot > 0
-            ? original.substring(
-                0,
-                dot
-            )
-            : original;
-
-
-    return (
-        base +
-        extension
-    );
-
-}
-
-
-// =====================================================
-// Startup
-// =====================================================
 
 console.log(
-    "Local Whisper loaded successfully."
+    "Local Whisper ready."
 );
