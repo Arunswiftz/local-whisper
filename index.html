@@ -6,149 +6,252 @@
 
     <title>Local Whisper - Speech to Text</title>
 
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="./style.css">
 
-    <script type="module" src="app.js"></script>
+    <script type="module" src="./app.js"></script>
 </head>
 
 <body>
 
-    <main class="container">
+<main class="container">
 
-        <header>
-            <div class="logo">🎙️</div>
-            <h1>Local Whisper</h1>
-            <p>Private speech-to-text running in your browser.</p>
-        </header>
+    <header>
+        <div class="logo">🎙️</div>
 
-        <section class="card">
+        <h1>Local Whisper</h1>
 
-            <div id="dropZone" class="drop-zone">
+        <p>
+            Private speech-to-text running in your browser.
+        </p>
+    </header>
 
-                <div class="upload-icon">📁</div>
 
-                <h2>Drop your audio file here</h2>
+    <section class="card">
 
-                <p>or</p>
+        <div
+            id="dropZone"
+            class="drop-zone"
+        >
 
-                <label class="button secondary">
-                    Choose Audio
-                    <input
-                        type="file"
-                        id="audioFile"
-                        accept="audio/*,video/*"
-                        hidden
-                    >
-                </label>
+            <div class="upload-icon">
+                📁
+            </div>
 
-                <p class="supported">
-                    MP3 · WAV · M4A · FLAC · MP4
-                </p>
+            <h2>
+                Drop your audio file here
+            </h2>
+
+            <p>
+                or
+            </p>
+
+            <!-- IMPORTANT:
+                 The label directly controls the file input.
+            -->
+
+            <label
+                for="audioFile"
+                class="button secondary"
+            >
+                Choose Audio
+            </label>
+
+            <input
+                id="audioFile"
+                type="file"
+                accept="audio/*,video/*"
+                style="display:none"
+            >
+
+            <p class="supported">
+                MP3 · WAV · M4A · FLAC · MP4
+            </p>
+
+        </div>
+
+
+        <div
+            id="fileInfo"
+            class="file-info hidden"
+        >
+
+            <span>🎵</span>
+
+            <div>
+
+                <strong id="fileName">
+                </strong>
+
+                <small id="fileSize">
+                </small>
 
             </div>
 
-            <div id="fileInfo" class="file-info hidden">
-                <span>🎵</span>
-                <div>
-                    <strong id="fileName"></strong>
-                    <small id="fileSize"></small>
-                </div>
-                <button id="removeFile">✕</button>
-            </div>
-
-            <div class="settings">
-
-                <div class="setting">
-                    <label for="language">Language</label>
-
-                    <select id="language">
-                        <option value="en">English</option>
-                        <option value="auto">Auto Detect</option>
-                        <option value="hi">Hindi</option>
-                        <option value="ta">Tamil</option>
-                        <option value="te">Telugu</option>
-                        <option value="ml">Malayalam</option>
-                        <option value="kn">Kannada</option>
-                        <option value="bn">Bengali</option>
-                        <option value="mr">Marathi</option>
-                    </select>
-                </div>
-
-                <div class="setting">
-                    <label for="model">Model</label>
-
-                    <select id="model">
-                        <option value="tiny.en">
-                            Tiny English — Fast
-                        </option>
-
-                        <option value="tiny">
-                            Tiny Multilingual
-                        </option>
-                    </select>
-                </div>
-
-            </div>
-
-            <button id="transcribeButton" class="button primary" disabled>
-                🎙️ Transcribe
+            <button
+                id="removeFile"
+                type="button"
+            >
+                ✕
             </button>
 
-            <div id="progressArea" class="progress-area hidden">
+        </div>
 
-                <div class="status" id="status">
-                    Loading model...
-                </div>
 
-                <div class="progress-bar">
-                    <div id="progressBar"></div>
-                </div>
+        <div class="settings">
+
+            <div class="setting">
+
+                <label for="language">
+                    Language
+                </label>
+
+                <select id="language">
+
+                    <option value="auto">
+                        Auto Detect
+                    </option>
+
+                    <option value="en">
+                        English
+                    </option>
+
+                    <option value="hi">
+                        Hindi
+                    </option>
+
+                    <option value="ta">
+                        Tamil
+                    </option>
+
+                    <option value="te">
+                        Telugu
+                    </option>
+
+                    <option value="ml">
+                        Malayalam
+                    </option>
+
+                    <option value="kn">
+                        Kannada
+                    </option>
+
+                </select>
 
             </div>
 
-        </section>
 
-        <section id="resultSection" class="card result hidden">
+            <div class="setting">
 
-            <div class="result-header">
-                <div>
-                    <h2>Transcription</h2>
-                    <p id="resultStatus"></p>
-                </div>
-            </div>
+                <label for="model">
+                    Model
+                </label>
 
-            <textarea
-                id="transcription"
-                placeholder="Your transcription will appear here..."
-            ></textarea>
+                <select id="model">
 
-            <div class="actions">
+                    <option value="tiny.en">
+                        Tiny English — Fast
+                    </option>
 
-                <button id="downloadTxt" class="button primary">
-                    ⬇ Download TXT
-                </button>
+                    <option value="tiny">
+                        Tiny Multilingual
+                    </option>
 
-                <button id="downloadSrt" class="button secondary">
-                    ⬇ Download SRT
-                </button>
+                </select>
 
             </div>
 
-        </section>
+        </div>
 
-        <footer>
 
-            <p>
-                🔒 Audio is processed locally in your browser.
-            </p>
+        <button
+            id="transcribeButton"
+            class="button primary"
+            type="button"
+            disabled
+        >
+            🎙️ Transcribe
+        </button>
 
-            <p>
-                Powered by Whisper + Transformers.js
-            </p>
 
-        </footer>
+        <div
+            id="progressArea"
+            class="progress-area hidden"
+        >
 
-    </main>
+            <div
+                id="status"
+                class="status"
+            >
+                Ready
+            </div>
+
+            <div class="progress-bar">
+
+                <div
+                    id="progressBar"
+                ></div>
+
+            </div>
+
+        </div>
+
+    </section>
+
+
+    <section
+        id="resultSection"
+        class="card result hidden"
+    >
+
+        <h2>
+            Transcription
+        </h2>
+
+        <p id="resultStatus">
+        </p>
+
+        <textarea
+            id="transcription"
+            placeholder="Your transcription will appear here..."
+        ></textarea>
+
+
+        <div class="actions">
+
+            <button
+                id="downloadTxt"
+                class="button primary"
+                type="button"
+            >
+                ⬇ Download TXT
+            </button>
+
+            <button
+                id="downloadSrt"
+                class="button secondary"
+                type="button"
+            >
+                ⬇ Download SRT
+            </button>
+
+        </div>
+
+    </section>
+
+
+    <footer>
+
+        <p>
+            🔒 Audio is processed locally in your browser.
+        </p>
+
+        <p>
+            Whisper + Transformers.js
+        </p>
+
+    </footer>
+
+</main>
 
 </body>
 </html>
