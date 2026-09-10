@@ -4,545 +4,99 @@ import {
     AutoModelForAudioFrameClassification
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
-
-// =====================================================
-// LOCAL WHISPER
-// Browser-only transcription + word timestamps +
-// automatic speaker diarization.
-// =====================================================
-
-
-// -----------------------------------------------------
-// HTML ELEMENTS
-// -----------------------------------------------------
-
-const audioFile = document.getElementById("audioFile");
-const fileInfo = document.getElementById("fileInfo");
-const fileName = document.getElementById("fileName");
-const fileSize = document.getElementById("fileSize");
-const removeFile = document.getElementById("removeFile");
-const transcribeButton = document.getElementById("transcribeButton");
-const dropZone = document.getElementById("dropZone");
-const progressArea = document.getElementById("progressArea");
-const progressBar = document.getElementById("progressBar");
-const status = document.getElementById("status");
-const resultSection = document.getElementById("resultSection");
-const transcription = document.getElementById("transcription");
-const resultStatus = document.getElementById("resultStatus");
-const downloadTxt = document.getElementById("downloadTxt");
-const downloadSrt = document.getElementById("downloadSrt");
-const languageSelect = document.getElementById("language");
-const modelSelect = document.getElementById("model");
-const sensitivitySelect = document.getElementById("sensitivity");
-
-
-// -----------------------------------------------------
-// VARIABLES
-// -----------------------------------------------------
-
-let selectedFile = null;
-let transcriber = null;
-let segmentationProcessor = null;
-let segmentationModel = null;
-let modelsLoaded = false;
-let cancelled = false;
-let transcriptionData = [];
-
-
-// -----------------------------------------------------
-// MODEL SETTINGS
-// -----------------------------------------------------
-
 const ASR_MODEL = "onnx-community/whisper-base_timestamped";
 const SEGMENTATION_MODEL = "onnx-community/pyannote-segmentation-3.0";
+const MAX_BLOCK_SECONDS = 7;
+const SPEAKER_MERGE_GAP = 1.25;
+const SPEAKER_CONFIDENCE = 0.20;
 
-// Lower no_speech_threshold = more willing to keep quiet speech.
-// This is deliberately exposed as a user-facing capture sensitivity.
 const SENSITIVITY = {
-    high: {
-        noSpeechThreshold: 0.15,
-        label: "High"
-    },
-    balanced: {
-        noSpeechThreshold: 0.25,
-        label: "Balanced"
-    },
-    strict: {
-        noSpeechThreshold: 0.40,
-        label: "Strict"
-    }
+    high: { noSpeechThreshold: 0.15, label: "High" },
+    balanced: { noSpeechThreshold: 0.25, label: "Balanced" },
+    strict: { noSpeechThreshold: 0.40, label: "Strict" }
 };
-
-const SPEAKER_CONFIDENCE_THRESHOLD = 0.20;
-const MAX_SRT_BLOCK_SECONDS = 7;
-const SPEAKER_MERGE_GAP_SECONDS = 1.25;
-
-
-// -----------------------------------------------------
-// ENGLISH VARIANT SETTINGS
-// -----------------------------------------------------
-
-// Whisper has one English language token rather than separate
-// acoustic models for US, Australian, and UK English. The selected
-// variant therefore biases spelling, vocabulary, punctuation, and
-// conventions through the initial prompt.
 
 const ENGLISH_VARIANTS = {
     "en-US": {
         label: "English US",
-        prompt:
-            "Transcribe in American English. Use US English spelling, vocabulary, punctuation, and conventions."
+        prompt: "Transcribe in American English. Use US English spelling, vocabulary, punctuation, and conventions."
     },
     "en-AU": {
         label: "English Australia",
-        prompt:
-            "Transcribe in Australian English. Use Australian English spelling, vocabulary, punctuation, and conventions."
+        prompt: "Transcribe in Australian English. Use Australian English spelling, vocabulary, punctuation, and conventions."
     },
     "en-GB": {
         label: "English UK",
-        prompt:
-            "Transcribe in British English. Use UK English spelling, vocabulary, punctuation, and conventions."
+        prompt: "Transcribe in British English. Use UK English spelling, vocabulary, punctuation, and conventions."
     }
 };
 
+const $ = id => document.getElementById(id);
+const audioFile = $("audioFile");
+const fileInfo = $("fileInfo");
+const fileName = $("fileName");
+const fileSize = $("fileSize");
+const removeFile = $("removeFile");
+const dropZone = $("dropZone");
+const transcribeButton = $("transcribeButton");
+const progressArea = $("progressArea");
+const progressBar = $("progressBar");
+const status = $("status");
+const resultSection = $("resultSection");
+const resultStatus = $("resultStatus");
+const transcription = $("transcription");
+const speakerTranscript = $("speakerTranscript");
+const downloadTxt = $("downloadTxt");
+const downloadSrt = $("downloadSrt");
+const copyTranscript = $("copyTranscript");
+const languageSelect = $("language");
+const sensitivitySelect = $("sensitivity");
+const mediaPreview = $("mediaPreview");
+const audioPreview = $("audioPreview");
+const videoPreview = $("videoPreview");
 
-function getSelectedEnglishVariant() {
-    return ENGLISH_VARIANTS[languageSelect.value] || ENGLISH_VARIANTS["en-US"];
+let selectedFile = null;
+let mediaObjectUrl = null;
+let transcriber = null;
+let segmentationProcessor = null;
+let segmentationModel = null;
+let modelsLoaded = false;
+let transcriptionData = [];
+
+function setProgress(value, message) {
+    progressBar.style.width = `${value}%`;
+    if (message) status.textContent = message;
 }
-
-
-function getSelectedSensitivity() {
-    return SENSITIVITY[sensitivitySelect.value] || SENSITIVITY.balanced;
-}
-
-
-// -----------------------------------------------------
-// FILE SELECTION
-// -----------------------------------------------------
-
-audioFile.addEventListener("change", event => {
-    const file = event.target.files[0];
-
-    if (file) {
-        selectFile(file);
-    }
-});
-
-
-function selectFile(file) {
-    selectedFile = file;
-    fileName.textContent = file.name;
-    fileSize.textContent = formatFileSize(file.size);
-
-    fileInfo.classList.remove("hidden");
-    transcribeButton.disabled = false;
-    resultSection.classList.add("hidden");
-
-    console.log("Selected:", file.name);
-}
-
 
 function formatFileSize(bytes) {
-    if (bytes < 1024) {
-        return bytes + " B";
-    }
-
-    if (bytes < 1024 * 1024) {
-        return (bytes / 1024).toFixed(1) + " KB";
-    }
-
-    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-
-// -----------------------------------------------------
-// REMOVE FILE
-// -----------------------------------------------------
-
-removeFile.addEventListener("click", () => {
-    selectedFile = null;
-    transcriptionData = [];
-    audioFile.value = "";
-    fileInfo.classList.add("hidden");
-    resultSection.classList.add("hidden");
-    transcribeButton.disabled = true;
-});
-
-
-// -----------------------------------------------------
-// DRAG AND DROP
-// -----------------------------------------------------
-
-dropZone.addEventListener("dragover", event => {
-    event.preventDefault();
-    dropZone.classList.add("dragging");
-});
-
-
-dropZone.addEventListener("dragleave", () => {
-    dropZone.classList.remove("dragging");
-});
-
-
-dropZone.addEventListener("drop", event => {
-    event.preventDefault();
-    dropZone.classList.remove("dragging");
-
-    const file = event.dataTransfer.files[0];
-
-    if (file) {
-        selectFile(file);
-    }
-});
-
-
-// -----------------------------------------------------
-// LOAD WHISPER + SPEAKER SEGMENTATION
-// -----------------------------------------------------
-
-async function loadModels() {
-    if (modelsLoaded) {
-        return;
-    }
-
-    status.textContent = "Loading Whisper Base and speaker detection models...";
-    progressBar.style.width = "5%";
-
-    let device = "wasm";
-
-    if ("gpu" in navigator) {
-        try {
-            const adapter = await navigator.gpu.requestAdapter();
-            if (adapter) {
-                device = "webgpu";
-            }
-        }
-        catch (error) {
-            console.warn("WebGPU detection failed; using WASM.", error);
-        }
-    }
-
-    console.log("Loading models on:", device);
-
-    const whisperOptions = device === "webgpu"
-        ? {
-            device: "webgpu",
-            dtype: {
-                encoder_model: "fp32",
-                decoder_model_merged: "q4"
-            }
-        }
-        : {
-            device: "wasm",
-            dtype: "q8"
-        };
-
-    status.textContent = "Loading Whisper Base...";
-
-    transcriber = await pipeline(
-        "automatic-speech-recognition",
-        ASR_MODEL,
-        whisperOptions
-    );
-
-    progressBar.style.width = "45%";
-
-    status.textContent = "Loading speaker detection model...";
-
-    // PyAnnote segmentation currently runs through WASM even when
-    // Whisper is accelerated with WebGPU.
-    segmentationProcessor = await AutoProcessor.from_pretrained(
-        SEGMENTATION_MODEL
-    );
-
-    segmentationModel = await AutoModelForAudioFrameClassification.from_pretrained(
-        SEGMENTATION_MODEL,
-        {
-            device: "wasm",
-            dtype: "fp32"
-        }
-    );
-
-    progressBar.style.width = "55%";
-    modelsLoaded = true;
-
-    console.log("Whisper and speaker detection models ready.");
+function formatTime(seconds) {
+    const safe = Math.max(0, Number(seconds) || 0);
+    const h = Math.floor(safe / 3600);
+    const m = Math.floor((safe % 3600) / 60);
+    const s = Math.floor(safe % 60);
+    return h > 0
+        ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+        : `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-
-// -----------------------------------------------------
-// DECODE AUDIO
-// -----------------------------------------------------
-
-async function decodeAudio(file) {
-    status.textContent = "Reading and normalising audio to 16 kHz mono...";
-    progressBar.style.width = "58%";
-
-    const buffer = await file.arrayBuffer();
-    const audioContext = new AudioContext();
-    const audioBuffer = await audioContext.decodeAudioData(buffer);
-    const duration = audioBuffer.duration;
-
-    const targetSampleRate = 16000;
-    const numberOfSamples = Math.ceil(duration * targetSampleRate);
-
-    const offlineContext = new OfflineAudioContext(
-        1,
-        numberOfSamples,
-        targetSampleRate
-    );
-
-    const source = offlineContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(offlineContext.destination);
-    source.start();
-
-    const rendered = await offlineContext.startRendering();
-    const samples = rendered.getChannelData(0);
-
-    await audioContext.close();
-
-    console.log("Decoded samples:", samples.length);
-
-    return {
-        samples,
-        duration,
-        sampleRate: targetSampleRate
-    };
+function formatSrtTime(seconds) {
+    const safe = Math.max(0, Number(seconds) || 0);
+    let totalMs = Math.round(safe * 1000);
+    const h = Math.floor(totalMs / 3600000);
+    totalMs %= 3600000;
+    const m = Math.floor(totalMs / 60000);
+    totalMs %= 60000;
+    const s = Math.floor(totalMs / 1000);
+    const ms = totalMs % 1000;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
 }
 
-
-// -----------------------------------------------------
-// SPEAKER DIARIZATION
-// -----------------------------------------------------
-
-async function detectSpeakers(samples) {
-    status.textContent = "Detecting speaker changes...";
-    progressBar.style.width = "82%";
-
-    const inputs = await segmentationProcessor(samples);
-    const output = await segmentationModel(inputs);
-
-    const segments = segmentationProcessor.post_process_speaker_diarization(
-        output.logits,
-        samples.length
-    )[0];
-
-    const labels = segmentationModel.config.id2label || {};
-
-    const usefulSegments = segments
-        .map(segment => ({
-            ...segment,
-            label: labels[segment.id] || segment.label || `SPEAKER_${segment.id}`
-        }))
-        .filter(segment => {
-            const confidence = Number(segment.confidence ?? 1);
-            return Number.isFinite(segment.start) &&
-                Number.isFinite(segment.end) &&
-                segment.end > segment.start &&
-                confidence >= SPEAKER_CONFIDENCE_THRESHOLD;
-        });
-
-    console.log("Speaker segments:", usefulSegments);
-
-    return mergeSpeakerSegments(usefulSegments);
-}
-
-
-function mergeSpeakerSegments(segments) {
-    const merged = [];
-
-    for (const segment of segments) {
-        const previous = merged[merged.length - 1];
-
-        if (
-            previous &&
-            previous.label === segment.label &&
-            segment.start - previous.end <= SPEAKER_MERGE_GAP_SECONDS
-        ) {
-            previous.end = Math.max(previous.end, segment.end);
-            previous.confidence = Math.max(
-                previous.confidence ?? 0,
-                segment.confidence ?? 0
-            );
-        }
-        else {
-            merged.push({ ...segment });
-        }
-    }
-
-    return merged;
-}
-
-
-function getSpeakerForWord(word, speakerSegments, previousSpeaker) {
-    const timestamp = word.timestamp || [];
-    const start = Number(timestamp[0]);
-    const end = Number(timestamp[1]);
-
-    if (!Number.isFinite(start)) {
-        return previousSpeaker || "Speaker 1";
-    }
-
-    const safeEnd = Number.isFinite(end) ? end : start + 0.05;
-    const midpoint = (start + safeEnd) / 2;
-
-    let best = null;
-    let bestOverlap = 0;
-
-    for (const segment of speakerSegments) {
-        const overlapStart = Math.max(start, segment.start);
-        const overlapEnd = Math.min(safeEnd, segment.end);
-        const overlap = Math.max(0, overlapEnd - overlapStart);
-
-        if (overlap > bestOverlap || (overlap === 0 && midpoint >= segment.start && midpoint <= segment.end && !best)) {
-            best = segment;
-            bestOverlap = overlap;
-        }
-    }
-
-    return best?.label || previousSpeaker || "Speaker 1";
-}
-
-
-// -----------------------------------------------------
-// SPEAKER LABEL NORMALISATION
-// -----------------------------------------------------
-
-function createSpeakerNameMap(items) {
-    const map = new Map();
-    let nextNumber = 1;
-
-    for (const item of items) {
-        if (!map.has(item.rawSpeaker)) {
-            map.set(item.rawSpeaker, `Speaker ${nextNumber}`);
-            nextNumber += 1;
-        }
-    }
-
-    return map;
-}
-
-
-// -----------------------------------------------------
-// BUILD SPEAKER-LABELLED TRANSCRIPT
-// -----------------------------------------------------
-
-function buildTranscript(wordChunks, speakerSegments) {
-    const words = [];
-    let previousSpeaker = null;
-
-    for (const chunk of wordChunks || []) {
-        const text = (chunk.text || "").trim();
-        const timestamp = chunk.timestamp || [];
-
-        if (!text) {
-            continue;
-        }
-
-        const start = Number(timestamp[0]);
-        const end = Number(timestamp[1]);
-
-        if (!Number.isFinite(start)) {
-            continue;
-        }
-
-        const rawSpeaker = getSpeakerForWord(
-            chunk,
-            speakerSegments,
-            previousSpeaker
-        );
-
-        previousSpeaker = rawSpeaker;
-
-        words.push({
-            text,
-            start,
-            end: Number.isFinite(end) ? end : start + 0.1,
-            rawSpeaker
-        });
-    }
-
-    const speakerMap = createSpeakerNameMap(words);
-
-    for (const word of words) {
-        word.speaker = speakerMap.get(word.rawSpeaker) || "Speaker 1";
-    }
-
-    const blocks = [];
-
-    for (const word of words) {
-        const previous = blocks[blocks.length - 1];
-
-        if (
-            previous &&
-            previous.speaker === word.speaker &&
-            word.start - previous.end <= SPEAKER_MERGE_GAP_SECONDS
-        ) {
-            previous.words.push(word);
-            previous.end = Math.max(previous.end, word.end);
-        }
-        else {
-            blocks.push({
-                speaker: word.speaker,
-                start: word.start,
-                end: word.end,
-                words: [word]
-            });
-        }
-    }
-
-    return splitLongBlocks(blocks);
-}
-
-
-function splitLongBlocks(blocks) {
-    const output = [];
-
-    for (const block of blocks) {
-        let current = null;
-
-        for (const word of block.words) {
-            if (!current) {
-                current = {
-                    speaker: block.speaker,
-                    start: word.start,
-                    end: word.end,
-                    words: [word]
-                };
-                continue;
-            }
-
-            const wouldBeTooLong = word.end - current.start > MAX_SRT_BLOCK_SECONDS;
-
-            if (wouldBeTooLong) {
-                output.push(current);
-                current = {
-                    speaker: block.speaker,
-                    start: word.start,
-                    end: word.end,
-                    words: [word]
-                };
-            }
-            else {
-                current.words.push(word);
-                current.end = word.end;
-            }
-        }
-
-        if (current) {
-            output.push(current);
-        }
-    }
-
-    return output.map(block => ({
-        ...block,
-        text: cleanBlockText(block.words.map(word => word.text).join(" "))
-    }));
-}
-
-
-function cleanBlockText(text) {
+function cleanText(text) {
     return text
         .replace(/\s+([,.!?;:])/g, "$1")
         .replace(/\s+(['’])/g, "$1")
@@ -550,45 +104,332 @@ function cleanBlockText(text) {
         .trim();
 }
 
+function selectFile(file) {
+    selectedFile = file;
+    transcriptionData = [];
+    fileName.textContent = file.name;
+    fileSize.textContent = formatFileSize(file.size);
+    fileInfo.classList.remove("hidden");
+    resultSection.classList.add("hidden");
+    transcribeButton.disabled = false;
+    setupMediaPreview(file);
+}
 
-// -----------------------------------------------------
-// TRANSCRIBE
-// -----------------------------------------------------
+function setupMediaPreview(file) {
+    if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+    mediaObjectUrl = URL.createObjectURL(file);
+    const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|mkv)$/i.test(file.name);
 
-transcribeButton.addEventListener("click", async () => {
-    if (!selectedFile) {
-        alert("Please select an audio file.");
+    audioPreview.pause();
+    videoPreview.pause();
+    audioPreview.removeAttribute("src");
+    videoPreview.removeAttribute("src");
+
+    if (isVideo) {
+        videoPreview.src = mediaObjectUrl;
+        videoPreview.classList.remove("hidden");
+        audioPreview.classList.add("hidden");
+    } else {
+        audioPreview.src = mediaObjectUrl;
+        audioPreview.classList.remove("hidden");
+        videoPreview.classList.add("hidden");
+    }
+    mediaPreview.classList.remove("hidden");
+}
+
+function removeSelectedFile() {
+    if (mediaObjectUrl) URL.revokeObjectURL(mediaObjectUrl);
+    mediaObjectUrl = null;
+    selectedFile = null;
+    transcriptionData = [];
+    audioFile.value = "";
+    fileInfo.classList.add("hidden");
+    mediaPreview.classList.add("hidden");
+    audioPreview.removeAttribute("src");
+    videoPreview.removeAttribute("src");
+    resultSection.classList.add("hidden");
+    transcribeButton.disabled = true;
+}
+
+audioFile.addEventListener("change", e => {
+    if (e.target.files[0]) selectFile(e.target.files[0]);
+});
+removeFile.addEventListener("click", removeSelectedFile);
+
+dropZone.addEventListener("dragover", e => {
+    e.preventDefault();
+    dropZone.classList.add("dragging");
+});
+dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragging"));
+dropZone.addEventListener("drop", e => {
+    e.preventDefault();
+    dropZone.classList.remove("dragging");
+    if (e.dataTransfer.files[0]) selectFile(e.dataTransfer.files[0]);
+});
+
+async function loadModels() {
+    if (modelsLoaded) return;
+
+    setProgress(5, "Checking browser acceleration...");
+    let device = "wasm";
+
+    if ("gpu" in navigator) {
+        try {
+            const adapter = await navigator.gpu.requestAdapter();
+            if (adapter) device = "webgpu";
+        } catch (error) {
+            console.warn("WebGPU unavailable; using WASM.", error);
+        }
+    }
+
+    const whisperOptions = device === "webgpu"
+        ? { device: "webgpu", dtype: { encoder_model: "fp32", decoder_model_merged: "q4" } }
+        : { device: "wasm", dtype: "q8" };
+
+    setProgress(10, `Loading Whisper Base (${device.toUpperCase()})...`);
+    transcriber = await pipeline("automatic-speech-recognition", ASR_MODEL, whisperOptions);
+    setProgress(45, "Loading speaker segmentation model...");
+
+    segmentationProcessor = await AutoProcessor.from_pretrained(SEGMENTATION_MODEL);
+    segmentationModel = await AutoModelForAudioFrameClassification.from_pretrained(
+        SEGMENTATION_MODEL,
+        { device: "wasm", dtype: "fp32" }
+    );
+
+    modelsLoaded = true;
+    setProgress(55, "Models ready.");
+}
+
+async function decodeAudio(file) {
+    setProgress(58, "Reading and normalising audio to 16 kHz mono...");
+    const buffer = await file.arrayBuffer();
+    const context = new AudioContext();
+    const sourceBuffer = await context.decodeAudioData(buffer);
+    const duration = sourceBuffer.duration;
+    const sampleRate = 16000;
+    const samplesCount = Math.ceil(duration * sampleRate);
+    const offline = new OfflineAudioContext(1, samplesCount, sampleRate);
+    const source = offline.createBufferSource();
+    source.buffer = sourceBuffer;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
+    const samples = rendered.getChannelData(0);
+    await context.close();
+    return { samples, duration };
+}
+
+async function detectSpeakers(samples) {
+    setProgress(82, "Detecting speaker changes...");
+    const inputs = await segmentationProcessor(samples);
+    const output = await segmentationModel(inputs);
+    const segments = segmentationProcessor.post_process_speaker_diarization(output.logits, samples.length)[0];
+    const labels = segmentationModel.config.id2label || {};
+
+    const useful = segments
+        .map(segment => ({
+            ...segment,
+            label: labels[segment.id] || segment.label || `SPEAKER_${segment.id}`
+        }))
+        .filter(segment => {
+            const confidence = Number(segment.confidence ?? 1);
+            return Number.isFinite(segment.start) && Number.isFinite(segment.end) &&
+                segment.end > segment.start && confidence >= SPEAKER_CONFIDENCE;
+        });
+
+    const merged = [];
+    for (const segment of useful) {
+        const previous = merged.at(-1);
+        if (previous && previous.label === segment.label && segment.start - previous.end <= SPEAKER_MERGE_GAP) {
+            previous.end = Math.max(previous.end, segment.end);
+            previous.confidence = Math.max(previous.confidence ?? 0, segment.confidence ?? 0);
+        } else {
+            merged.push({ ...segment });
+        }
+    }
+    return merged;
+}
+
+function speakerForWord(word, segments, previousSpeaker) {
+    const [rawStart, rawEnd] = word.timestamp || [];
+    const start = Number(rawStart);
+    const end = Number.isFinite(Number(rawEnd)) ? Number(rawEnd) : start + 0.05;
+    if (!Number.isFinite(start)) return previousSpeaker || "Speaker 1";
+
+    let best = null;
+    let bestOverlap = 0;
+    for (const segment of segments) {
+        const overlap = Math.max(0, Math.min(end, segment.end) - Math.max(start, segment.start));
+        const midpointMatch = overlap === 0 && (start + end) / 2 >= segment.start && (start + end) / 2 <= segment.end;
+        if (overlap > bestOverlap || (midpointMatch && !best)) {
+            best = segment;
+            bestOverlap = overlap;
+        }
+    }
+    return best?.label || previousSpeaker || "Speaker 1";
+}
+
+function buildTranscript(wordChunks, speakerSegments) {
+    const words = [];
+    let previousSpeaker = null;
+
+    for (const chunk of wordChunks || []) {
+        const text = (chunk.text || "").trim();
+        const [rawStart, rawEnd] = chunk.timestamp || [];
+        const start = Number(rawStart);
+        const end = Number(rawEnd);
+        if (!text || !Number.isFinite(start)) continue;
+
+        const rawSpeaker = speakerForWord(chunk, speakerSegments, previousSpeaker);
+        previousSpeaker = rawSpeaker;
+        words.push({ text, start, end: Number.isFinite(end) ? end : start + 0.1, rawSpeaker });
+    }
+
+    const speakerMap = new Map();
+    let speakerNumber = 1;
+    for (const word of words) {
+        if (!speakerMap.has(word.rawSpeaker)) speakerMap.set(word.rawSpeaker, `Speaker ${speakerNumber++}`);
+        word.speaker = speakerMap.get(word.rawSpeaker);
+    }
+
+    const blocks = [];
+    for (const word of words) {
+        const previous = blocks.at(-1);
+        if (previous && previous.speaker === word.speaker && word.start - previous.end <= SPEAKER_MERGE_GAP) {
+            previous.words.push(word);
+            previous.end = Math.max(previous.end, word.end);
+        } else {
+            blocks.push({ speaker: word.speaker, start: word.start, end: word.end, words: [word] });
+        }
+    }
+
+    const output = [];
+    for (const block of blocks) {
+        let current = null;
+        for (const word of block.words) {
+            if (!current) {
+                current = { speaker: block.speaker, start: word.start, end: word.end, words: [word] };
+                continue;
+            }
+            if (word.end - current.start > MAX_BLOCK_SECONDS) {
+                output.push(current);
+                current = { speaker: block.speaker, start: word.start, end: word.end, words: [word] };
+            } else {
+                current.words.push(word);
+                current.end = Math.max(current.end, word.end);
+            }
+        }
+        if (current) output.push(current);
+    }
+
+    return output.map(block => ({
+        ...block,
+        text: cleanText(block.words.map(word => word.text).join(" "))
+    }));
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function getMediaElement() {
+    return videoPreview.classList.contains("hidden") ? audioPreview : videoPreview;
+}
+
+function renderTranscript() {
+    speakerTranscript.innerHTML = "";
+
+    if (!transcriptionData.length) {
+        speakerTranscript.innerHTML = `<p class="transcript-text">No speech was detected.</p>`;
         return;
     }
 
-    cancelled = false;
-    transcriptionData = [];
+    transcriptionData.forEach((block, blockIndex) => {
+        const article = document.createElement("article");
+        article.className = "transcript-block";
+        article.dataset.index = blockIndex;
+        article.dataset.start = block.start;
+        article.dataset.end = block.end;
+
+        const meta = document.createElement("div");
+        meta.className = "transcript-meta";
+        meta.innerHTML = `<span class="speaker-label">${escapeHtml(block.speaker)}</span><span class="speaker-time">${formatTime(block.start)} — ${formatTime(block.end)}</span>`;
+
+        const paragraph = document.createElement("p");
+        paragraph.className = "transcript-text";
+        block.words.forEach((word, wordIndex) => {
+            const span = document.createElement("span");
+            span.className = "transcript-word";
+            span.textContent = word.text + (wordIndex === block.words.length - 1 ? "" : " ");
+            span.dataset.start = word.start;
+            span.addEventListener("click", event => {
+                event.stopPropagation();
+                seekTo(word.start);
+            });
+            paragraph.appendChild(span);
+        });
+
+        article.append(meta, paragraph);
+        article.addEventListener("click", () => seekTo(block.start));
+        speakerTranscript.appendChild(article);
+    });
+}
+
+function seekTo(seconds) {
+    const media = getMediaElement();
+    if (!media.src) return;
+    media.currentTime = Math.max(0, Number(seconds) || 0);
+    media.focus({ preventScroll: true });
+}
+
+function updateActiveTranscript() {
+    const media = getMediaElement();
+    if (!media.src || !transcriptionData.length) return;
+    const time = media.currentTime;
+    let activeIndex = -1;
+    transcriptionData.forEach((block, index) => {
+        if (time >= block.start && time <= block.end) activeIndex = index;
+    });
+
+    document.querySelectorAll(".transcript-block").forEach((element, index) => {
+        element.classList.toggle("active", index === activeIndex);
+    });
+
+    if (activeIndex >= 0) {
+        const active = speakerTranscript.querySelector(`[data-index="${activeIndex}"]`);
+        if (active && !speakerTranscript.matches(":hover")) active.scrollIntoView({ block: "nearest" });
+    }
+}
+
+audioPreview.addEventListener("timeupdate", updateActiveTranscript);
+videoPreview.addEventListener("timeupdate", updateActiveTranscript);
+
+transcribeButton.addEventListener("click", async () => {
+    if (!selectedFile) return;
 
     try {
         transcribeButton.disabled = true;
         resultSection.classList.add("hidden");
         progressArea.classList.remove("hidden");
+        transcriptionData = [];
         transcription.value = "";
 
-        const selectedVariant = getSelectedEnglishVariant();
-        const sensitivity = getSelectedSensitivity();
+        const variant = ENGLISH_VARIANTS[languageSelect.value] || ENGLISH_VARIANTS["en-US"];
+        const sensitivity = SENSITIVITY[sensitivitySelect.value] || SENSITIVITY.balanced;
 
         await loadModels();
-
         const audio = await decodeAudio(selectedFile);
 
-        if (cancelled) {
-            throw new Error("Transcription cancelled.");
-        }
-
-        status.textContent =
-            `Transcribing with ${selectedVariant.label} • ${sensitivity.label} capture...`;
-        progressBar.style.width = "60%";
-
-        const asrResult = await transcriber(audio.samples, {
+        setProgress(60, `Transcribing with ${variant.label} • ${sensitivity.label} capture...`);
+        const result = await transcriber(audio.samples, {
             language: "english",
             task: "transcribe",
-            initial_prompt: selectedVariant.prompt,
+            initial_prompt: variant.prompt,
             return_timestamps: "word",
             chunk_length_s: 30,
             no_speech_threshold: sensitivity.noSpeechThreshold,
@@ -596,205 +437,69 @@ transcribeButton.addEventListener("click", async () => {
             compression_ratio_threshold: 2.4
         });
 
-        if (cancelled) {
-            throw new Error("Transcription cancelled.");
-        }
-
-        const wordChunks = asrResult.chunks || [];
-
-        console.log("Whisper word chunks:", wordChunks.length);
-
         const speakerSegments = await detectSpeakers(audio.samples);
+        transcriptionData = buildTranscript(result.chunks || [], speakerSegments);
 
-        if (cancelled) {
-            throw new Error("Transcription cancelled.");
-        }
-
-        transcriptionData = buildTranscript(
-            wordChunks,
-            speakerSegments
-        );
-
-        const textOutput = transcriptionData
+        transcription.value = transcriptionData
             .map(block => `${block.speaker}\n${block.text}`)
             .join("\n\n");
 
-        transcription.value = textOutput;
+        renderTranscript();
+        setProgress(100, "Transcription complete.");
 
-        progressBar.style.width = "100%";
-        status.textContent = "Transcription and speaker detection complete!";
-
-        const speakerCount = new Set(
-            transcriptionData.map(block => block.speaker)
-        ).size;
-
-        resultStatus.textContent =
-            `Processed ${formatTime(audio.duration)} of audio • ` +
-            `${speakerCount || 1} speaker(s) detected • ` +
-            `${selectedVariant.label} • ${sensitivity.label} capture.`;
-
+        const speakerCount = new Set(transcriptionData.map(block => block.speaker)).size;
+        resultStatus.textContent = `Processed ${formatTime(audio.duration)} • ${speakerCount || 1} speaker(s) • ${variant.label} • ${sensitivity.label} capture`;
         resultSection.classList.remove("hidden");
-
-        console.log("Final speaker-labelled transcript:", transcriptionData);
-    }
-    catch (error) {
+    } catch (error) {
         console.error("TRANSCRIPTION ERROR:", error);
-
-        status.textContent = "Transcription failed.";
-        progressBar.style.width = "0%";
-
-        alert(
-            "Transcription failed:\n\n" +
-            (error?.message || error)
-        );
-    }
-    finally {
+        setProgress(0, "Transcription failed.");
+        alert(`Transcription failed:\n\n${error?.message || error}`);
+    } finally {
         transcribeButton.disabled = !selectedFile;
     }
 });
 
-
-// -----------------------------------------------------
-// FORMAT TIME
-// -----------------------------------------------------
-
-function formatTime(seconds) {
-    const safeSeconds = Math.max(0, Number(seconds) || 0);
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    const secs = Math.floor(safeSeconds % 60);
-
-    if (hours > 0) {
-        return (
-            String(hours).padStart(2, "0") + ":" +
-            String(minutes).padStart(2, "0") + ":" +
-            String(secs).padStart(2, "0")
-        );
-    }
-
-    return (
-        String(minutes).padStart(2, "0") + ":" +
-        String(secs).padStart(2, "0")
-    );
-}
-
-
-function formatSrtTime(seconds) {
-    const safe = Math.max(0, Number(seconds) || 0);
-    const hours = Math.floor(safe / 3600);
-    const minutes = Math.floor((safe % 3600) / 60);
-    const secs = Math.floor(safe % 60);
-    const milliseconds = Math.round((safe - Math.floor(safe)) * 1000);
-
-    let ms = milliseconds;
-    let s = secs;
-    let m = minutes;
-    let h = hours;
-
-    if (ms >= 1000) {
-        ms = 0;
-        s += 1;
-    }
-
-    if (s >= 60) {
-        s = 0;
-        m += 1;
-    }
-
-    if (m >= 60) {
-        m = 0;
-        h += 1;
-    }
-
-    return (
-        String(h).padStart(2, "0") + ":" +
-        String(m).padStart(2, "0") + ":" +
-        String(s).padStart(2, "0") + "," +
-        String(ms).padStart(3, "0")
-    );
-}
-
-
-// -----------------------------------------------------
-// DOWNLOAD TXT
-// -----------------------------------------------------
-
-downloadTxt.addEventListener("click", () => {
-    if (!transcription.value.trim()) {
-        return;
-    }
-
-    downloadBlob(
-        transcription.value,
-        getOutputFilename("txt"),
-        "text/plain;charset=utf-8"
-    );
-});
-
-
-// -----------------------------------------------------
-// DOWNLOAD SRT
-// -----------------------------------------------------
-
-downloadSrt.addEventListener("click", () => {
-    if (!transcriptionData.length) {
-        alert("Please transcribe an audio file first.");
-        return;
-    }
-
-    const srt = transcriptionData
-        .map((block, index) => {
-            const start = formatSrtTime(block.start);
-            const end = formatSrtTime(Math.max(block.end, block.start + 0.1));
-            const text = `${block.speaker}\n${block.text}`;
-
-            return `${index + 1}\n${start} --> ${end}\n${text}`;
-        })
-        .join("\n\n");
-
-    downloadBlob(
-        srt + "\n",
-        getOutputFilename("srt"),
-        "application/x-subrip;charset=utf-8"
-    );
-});
-
-
-function downloadBlob(content, filename, type) {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-
-    link.href = url;
-    link.download = filename;
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    URL.revokeObjectURL(url);
-}
-
-
-// -----------------------------------------------------
-// OUTPUT FILENAME
-// -----------------------------------------------------
-
-function getOutputFilename(extension = "txt") {
-    if (!selectedFile) {
-        return `transcription.${extension}`;
-    }
-
-    const name = selectedFile.name;
-    const dot = name.lastIndexOf(".");
-    const base = dot > 0 ? name.substring(0, dot) : name;
-
+function getOutputFilename(extension) {
+    if (!selectedFile) return `transcription.${extension}`;
+    const dot = selectedFile.name.lastIndexOf(".");
+    const base = dot > 0 ? selectedFile.name.slice(0, dot) : selectedFile.name;
     return `${base}_transcription.${extension}`;
 }
 
+function downloadBlob(content, filename, type) {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
 
-// -----------------------------------------------------
-// STARTUP
-// -----------------------------------------------------
+downloadTxt.addEventListener("click", () => {
+    if (transcription.value.trim()) downloadBlob(transcription.value, getOutputFilename("txt"), "text/plain;charset=utf-8");
+});
 
-console.log("Local Whisper speaker diarization version ready.");
+downloadSrt.addEventListener("click", () => {
+    if (!transcriptionData.length) return;
+    const srt = transcriptionData.map((block, index) => {
+        const end = Math.max(block.end, block.start + 0.1);
+        return `${index + 1}\n${formatSrtTime(block.start)} --> ${formatSrtTime(end)}\n${block.speaker}\n${block.text}`;
+    }).join("\n\n");
+    downloadBlob(`${srt}\n`, getOutputFilename("srt"), "application/x-subrip;charset=utf-8");
+});
+
+copyTranscript.addEventListener("click", async () => {
+    if (!transcription.value.trim()) return;
+    try {
+        await navigator.clipboard.writeText(transcription.value);
+        const original = copyTranscript.textContent;
+        copyTranscript.textContent = "Copied";
+        setTimeout(() => { copyTranscript.textContent = original; }, 1200);
+    } catch (error) {
+        console.warn("Clipboard copy failed.", error);
+    }
+});
+
+console.log("Local Whisper ready — minimal UI + clickable transcript viewer.");
