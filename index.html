@@ -3,254 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Local Whisper - Speech to Text</title>
-
+    <title>Local Whisper — Speech to Text</title>
     <link rel="stylesheet" href="./style.css">
-
     <script type="module" src="./app.js"></script>
 </head>
-
 <body>
-
 <main class="container">
-
-    <header>
-        <div class="logo">🎙️</div>
-
+    <header class="app-header">
+        <div class="brand-mark">LW</div>
         <h1>Local Whisper</h1>
-
-        <p>
-            Private speech-to-text running in your browser.
-        </p>
+        <p>Private speech-to-text, running entirely in your browser.</p>
     </header>
 
-
     <section class="card">
-
-        <div
-            id="dropZone"
-            class="drop-zone"
-        >
-
-            <div class="upload-icon">
-                📁
-            </div>
-
-            <h2>
-                Drop your audio file here
-            </h2>
-
-            <p>
-                or
-            </p>
-
-            <label
-                for="audioFile"
-                class="button secondary"
-            >
-                Choose Audio
-            </label>
-
-            <input
-                id="audioFile"
-                type="file"
-                accept="audio/*,video/*"
-                style="display:none"
-            >
-
-            <p class="supported">
-                MP3 · WAV · M4A · FLAC · MP4
-            </p>
-
+        <div id="dropZone" class="drop-zone">
+            <div class="upload-icon">↑</div>
+            <h2>Drop an audio or video file here</h2>
+            <p>or</p>
+            <label for="audioFile" class="button secondary">Choose file</label>
+            <input id="audioFile" type="file" accept="audio/*,video/*" hidden>
+            <p class="supported">MP3 · WAV · M4A · FLAC · MP4</p>
         </div>
 
-
-        <div
-            id="fileInfo"
-            class="file-info hidden"
-        >
-
-            <span>🎵</span>
-
-            <div>
-
-                <strong id="fileName">
-                </strong>
-
-                <small id="fileSize">
-                </small>
-
+        <div id="fileInfo" class="file-info hidden">
+            <div class="file-icon">♪</div>
+            <div class="file-meta">
+                <strong id="fileName"></strong>
+                <small id="fileSize"></small>
             </div>
-
-            <button
-                id="removeFile"
-                type="button"
-            >
-                ✕
-            </button>
-
+            <button id="removeFile" class="icon-button" type="button" aria-label="Remove file">×</button>
         </div>
 
+        <div id="mediaPreview" class="media-preview hidden">
+            <audio id="audioPreview" controls></audio>
+            <video id="videoPreview" controls></video>
+        </div>
 
         <div class="settings">
-
             <div class="setting">
-
-                <label for="language">
-                    English Variant
-                </label>
-
+                <label for="language">English variant</label>
                 <select id="language">
-
-                    <option value="en-US">
-                        English US
-                    </option>
-
-                    <option value="en-AU">
-                        English Australia
-                    </option>
-
-                    <option value="en-GB">
-                        English UK
-                    </option>
-
+                    <option value="en-US">English US</option>
+                    <option value="en-AU">English Australia</option>
+                    <option value="en-GB">English UK</option>
                 </select>
-
             </div>
-
-
             <div class="setting">
-
-                <label for="model">
-                    Model
-                </label>
-
+                <label for="model">Model</label>
                 <select id="model">
-                    <option value="base_timestamped">
-                        Whisper Base — Accurate + Speakers
-                    </option>
+                    <option value="base_timestamped">Whisper Base — timestamps + speakers</option>
                 </select>
-
             </div>
-
-
             <div class="setting">
-
-                <label for="sensitivity">
-                    Speech Capture Sensitivity
-                </label>
-
+                <label for="sensitivity">Speech capture</label>
                 <select id="sensitivity">
-                    <option value="high">
-                        High — capture quieter speech
-                    </option>
-                    <option value="balanced" selected>
-                        Balanced — recommended
-                    </option>
-                    <option value="strict">
-                        Strict — reduce background noise
-                    </option>
+                    <option value="high">High — capture quieter speech</option>
+                    <option value="balanced" selected>Balanced — recommended</option>
+                    <option value="strict">Strict — reduce background noise</option>
                 </select>
-
             </div>
-
         </div>
 
-        <p class="setting-help">
-            Speaker detection and word timestamps are enabled automatically. High sensitivity is useful for quiet speakers, while Strict can reduce false words from background noise.
-        </p>
+        <p class="setting-help">Word timestamps and automatic speaker segmentation are enabled. High is useful for quieter voices; Strict is more conservative with background noise.</p>
 
+        <button id="transcribeButton" class="button primary transcribe" type="button" disabled>Transcribe</button>
 
-        <button
-            id="transcribeButton"
-            class="button primary"
-            type="button"
-            disabled
-        >
-            🎙️ Transcribe
-        </button>
-
-
-        <div
-            id="progressArea"
-            class="progress-area hidden"
-        >
-
-            <div
-                id="status"
-                class="status"
-            >
-                Ready
-            </div>
-
-            <div class="progress-bar">
-
-                <div
-                    id="progressBar"
-                ></div>
-
-            </div>
-
+        <div id="progressArea" class="progress-area hidden">
+            <div id="status" class="status">Ready</div>
+            <div class="progress-bar"><div id="progressBar"></div></div>
         </div>
-
     </section>
 
+    <section id="resultSection" class="card result hidden">
+        <div class="result-heading">
+            <div>
+                <p class="eyebrow">RESULT</p>
+                <h2>Transcript</h2>
+                <p id="resultStatus"></p>
+            </div>
+            <button id="copyTranscript" class="button secondary compact" type="button">Copy</button>
+        </div>
 
-    <section
-        id="resultSection"
-        class="card result hidden"
-    >
+        <div id="speakerTranscript" class="speaker-transcript" aria-live="polite"></div>
 
-        <h2>
-            Transcription
-        </h2>
-
-        <p id="resultStatus">
-        </p>
-
-        <textarea
-            id="transcription"
-            placeholder="Your speaker-labelled transcription will appear here..."
-        ></textarea>
-
+        <details class="raw-transcript">
+            <summary>Edit raw transcript</summary>
+            <textarea id="transcription" placeholder="Your speaker-labelled transcription will appear here..."></textarea>
+        </details>
 
         <div class="actions">
-
-            <button
-                id="downloadTxt"
-                class="button primary"
-                type="button"
-            >
-                ⬇ Download TXT
-            </button>
-
-            <button
-                id="downloadSrt"
-                class="button secondary"
-                type="button"
-            >
-                ⬇ Download SRT
-            </button>
-
+            <button id="downloadTxt" class="button primary" type="button">Download TXT</button>
+            <button id="downloadSrt" class="button secondary" type="button">Download SRT</button>
         </div>
-
     </section>
 
-
     <footer>
-
-        <p>
-            🔒 Audio is processed locally in your browser.
-        </p>
-
-        <p>
-            Whisper + Transformers.js + PyAnnote segmentation
-        </p>
-
+        <p>Audio is processed locally in your browser.</p>
+        <p>Whisper + Transformers.js + PyAnnote segmentation</p>
     </footer>
-
 </main>
-
 </body>
 </html>
