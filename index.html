@@ -127,20 +127,39 @@
                 </label>
 
                 <select id="model">
-
-                    <option value="tiny.en">
-                        Tiny English — Fast
+                    <option value="base_timestamped">
+                        Whisper Base — Accurate + Speakers
                     </option>
+                </select>
 
-                    <option value="tiny">
-                        Tiny Multilingual
+            </div>
+
+
+            <div class="setting">
+
+                <label for="sensitivity">
+                    Speech Capture Sensitivity
+                </label>
+
+                <select id="sensitivity">
+                    <option value="high">
+                        High — capture quieter speech
                     </option>
-
+                    <option value="balanced" selected>
+                        Balanced — recommended
+                    </option>
+                    <option value="strict">
+                        Strict — reduce background noise
+                    </option>
                 </select>
 
             </div>
 
         </div>
+
+        <p class="setting-help">
+            Speaker detection and word timestamps are enabled automatically. High sensitivity is useful for quiet speakers, while Strict can reduce false words from background noise.
+        </p>
 
 
         <button
@@ -192,7 +211,7 @@
 
         <textarea
             id="transcription"
-            placeholder="Your transcription will appear here..."
+            placeholder="Your speaker-labelled transcription will appear here..."
         ></textarea>
 
 
@@ -226,7 +245,7 @@
         </p>
 
         <p>
-            Whisper + Transformers.js
+            Whisper + Transformers.js + PyAnnote segmentation
         </p>
 
     </footer>
