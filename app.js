@@ -9,6 +9,8 @@ const SEGMENTATION_MODEL = "onnx-community/pyannote-segmentation-3.0";
 const MAX_BLOCK_SECONDS = 7;
 const SPEAKER_MERGE_GAP = 1.25;
 const SPEAKER_CONFIDENCE = 0.20;
+const MAX_AUDIO_DURATION_SECONDS = 12 * 60;
+const TRANSCRIPTION_CHUNK_SECONDS = 29; // ~30s; 29 avoids timestamp bug in whisper-base_timestamped
 
 const SENSITIVITY = {
     high: { noSpeechThreshold: 0.15, label: "High" },
@@ -214,48 +216,90 @@ async function decodeAudio(file) {
 }
 
 async function transcribeAudio(samples, duration, variant, sensitivity) {
-    // Let Transformers.js handle Whisper's long-form chunking. Whisper itself
-    // is limited to ~30 seconds per inference window, and the pipeline stitches
-    // the windows together for arbitrary-length audio.
-    //
-    // IMPORTANT: 29s is intentional. Transformers.js 3.x has a known issue with
-    // the timestamped Whisper model when chunk_length_s is exactly 30s; using
-    // 29s avoids the boundary/timestamp failure and preserves later chunks.
-    setProgress(60, "Transcribing full audio...");
+    const SAMPLE_RATE = 16000;
+    const chunkSamples = TRANSCRIPTION_CHUNK_SECONDS * SAMPLE_RATE;
+    const allChunks = [];
+    const totalChunks = Math.ceil(samples.length / chunkSamples);
 
-    const result = await transcriber(samples, {
-        language: "english",
-        task: "transcribe",
-        initial_prompt: variant.prompt,
-        chunk_length_s: 29,
-        stride_length_s: 5,
-        return_timestamps: "word",
-        no_speech_threshold: sensitivity.noSpeechThreshold,
-        logprob_threshold: -1.0,
-        compression_ratio_threshold: 2.4
-    });
+    // Whisper itself accepts only ~30 seconds per inference window. We process
+    // the recording one window at a time and merge the timestamped results
+    // onto the original timeline. 29 seconds is used instead of exactly 30
+    // because whisper-base_timestamped has a known 30s timestamp issue.
+    for (let offset = 0, chunkIndex = 0; offset < samples.length; offset += chunkSamples, chunkIndex++) {
+        const end = Math.min(offset + chunkSamples, samples.length);
+        const chunk = samples.slice(offset, end);
+        const chunkStart = offset / SAMPLE_RATE;
+        const chunkEnd = end / SAMPLE_RATE;
 
+        setProgress(
+            60 + Math.round((chunkIndex / totalChunks) * 18),
+            "Transcribing chunk " + (chunkIndex + 1) + " of " + totalChunks +
+            " • " + formatTime(chunkStart) + " → " + formatTime(Math.min(chunkEnd, duration))
+        );
+
+        const result = await transcriber(chunk, {
+            language: "english",
+            task: "transcribe",
+            initial_prompt: variant.prompt,
+            return_timestamps: "word",
+            no_speech_threshold: sensitivity.noSpeechThreshold,
+            logprob_threshold: -1.0,
+            compression_ratio_threshold: 2.4
+        });
+
+        for (const word of result?.chunks || []) {
+            const timestamp = word.timestamp || [];
+            const localStart = Number(timestamp[0]);
+            const localEnd = Number(timestamp[1]);
+
+            if (!Number.isFinite(localStart)) continue;
+
+            const start = chunkStart + Math.max(0, localStart);
+            const endTime = chunkStart + (
+                Number.isFinite(localEnd) && localEnd > localStart
+                    ? localEnd
+                    : localStart + 0.1
+            );
+
+            if (start >= duration) continue;
+
+            allChunks.push({
+                text: word.text,
+                timestamp: [
+                    Math.min(start, duration),
+                    Math.min(Math.max(start + 0.05, endTime), duration)
+                ]
+            });
+        }
+    }
+
+    // Keep the original word order and remove duplicate/empty timestamped
+    // words at chunk boundaries.
     const chunks = [];
-    for (const chunk of result?.chunks || []) {
-        const timestamp = chunk.timestamp || [];
-        const start = Number(timestamp[0]);
-        const end = Number(timestamp[1]);
+    for (const chunk of allChunks) {
+        const text = cleanText(chunk.text || "");
+        if (!text) continue;
 
-        if (!Number.isFinite(start) || start >= duration) continue;
+        const previous = chunks.at(-1);
+        const previousText = previous ? cleanText(previous.text).toLowerCase() : "";
+        const currentText = text.toLowerCase();
+
+        if (
+            previous &&
+            previousText === currentText &&
+            Math.abs(chunk.timestamp[0] - previous.timestamp[0]) < 0.75
+        ) {
+            previous.timestamp[1] = Math.max(previous.timestamp[1], chunk.timestamp[1]);
+            continue;
+        }
 
         chunks.push({
-            text: chunk.text,
-            timestamp: [
-                Math.max(0, start),
-                Math.min(
-                    duration,
-                    Number.isFinite(end) && end > start ? end : start + 0.1
-                )
-            ]
+            text,
+            timestamp: chunk.timestamp
         });
     }
 
-    setProgress(78, "Transcription complete. Preparing transcript...");
+    setProgress(78, "All chunks transcribed. Preparing transcript...");
     return { chunks };
 }
 
@@ -497,6 +541,14 @@ transcribeButton.addEventListener("click", async () => {
 
         await loadModels();
         const audio = await decodeAudio(selectedFile);
+
+        if (audio.duration > MAX_AUDIO_DURATION_SECONDS) {
+            throw new Error(
+                "Audio/video is too long. The current limit is " +
+                formatTime(MAX_AUDIO_DURATION_SECONDS) +
+                ". Your file is " + formatTime(audio.duration) + "."
+            );
+        }
 
         setProgress(
             60,
