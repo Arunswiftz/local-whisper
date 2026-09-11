@@ -214,84 +214,49 @@ async function decodeAudio(file) {
 }
 
 async function transcribeAudio(samples, duration, variant, sensitivity) {
-    const SAMPLE_RATE = 16000;
-    const CHUNK_SECONDS = 30;
-    const STRIDE_SECONDS = 3;
-    const chunkSamples = CHUNK_SECONDS * SAMPLE_RATE;
-    const strideSamples = STRIDE_SECONDS * SAMPLE_RATE;
-    const allWords = [];
+    // Let Transformers.js handle Whisper's long-form chunking. Whisper itself
+    // is limited to ~30 seconds per inference window, and the pipeline stitches
+    // the windows together for arbitrary-length audio.
+    //
+    // IMPORTANT: 29s is intentional. Transformers.js 3.x has a known issue with
+    // the timestamped Whisper model when chunk_length_s is exactly 30s; using
+    // 29s avoids the boundary/timestamp failure and preserves later chunks.
+    setProgress(60, "Transcribing full audio...");
 
-    // Process audio in small windows so long MP3/WAV files do not require
-    // Whisper to hold the complete recording's inference state at once.
-    for (let offset = 0; offset < samples.length; offset += chunkSamples) {
-        const end = Math.min(offset + chunkSamples, samples.length);
-        const contextStart = Math.max(0, offset - strideSamples);
-        const contextEnd = Math.min(samples.length, end + strideSamples);
-        const chunk = samples.slice(contextStart, contextEnd);
+    const result = await transcriber(samples, {
+        language: "english",
+        task: "transcribe",
+        initial_prompt: variant.prompt,
+        chunk_length_s: 29,
+        stride_length_s: 5,
+        return_timestamps: "word",
+        no_speech_threshold: sensitivity.noSpeechThreshold,
+        logprob_threshold: -1.0,
+        compression_ratio_threshold: 2.4
+    });
 
-        setProgress(
-            60 + Math.round((offset / samples.length) * 18),
-            "Transcribing " + formatTime(offset / SAMPLE_RATE) +
-            " → " + formatTime(end / SAMPLE_RATE) + " of " +
-            formatTime(duration) + "..."
-        );
+    const chunks = [];
+    for (const chunk of result?.chunks || []) {
+        const timestamp = chunk.timestamp || [];
+        const start = Number(timestamp[0]);
+        const end = Number(timestamp[1]);
 
-        const result = await transcriber(chunk, {
-            language: "english",
-            task: "transcribe",
-            initial_prompt: variant.prompt,
-            return_timestamps: "word",
-            no_speech_threshold: sensitivity.noSpeechThreshold,
-            logprob_threshold: -1.0,
-            compression_ratio_threshold: 2.4
+        if (!Number.isFinite(start) || start >= duration) continue;
+
+        chunks.push({
+            text: chunk.text,
+            timestamp: [
+                Math.max(0, start),
+                Math.min(
+                    duration,
+                    Number.isFinite(end) && end > start ? end : start + 0.1
+                )
+            ]
         });
-
-        for (const word of result?.chunks || []) {
-            const timestamp = word.timestamp || [];
-            const localStart = Number(timestamp[0]);
-            const localEnd = Number(timestamp[1]);
-
-            if (!Number.isFinite(localStart)) continue;
-
-            const absoluteStart = contextStart / SAMPLE_RATE + localStart;
-            const absoluteEnd = Number.isFinite(localEnd)
-                ? contextStart / SAMPLE_RATE + localEnd
-                : absoluteStart + 0.1;
-
-            // Ignore the context/overlap portions. They are supplied only to
-            // help Whisper understand words at the boundary.
-            if (absoluteStart < offset && offset > 0) continue;
-            if (absoluteStart >= duration) continue;
-
-            allWords.push({
-                text: word.text,
-                timestamp: [absoluteStart, Math.min(absoluteEnd, duration)]
-            });
-        }
     }
 
-    // Remove duplicate boundary words that can still occur around chunk joins.
-    const deduped = [];
-    for (const word of allWords) {
-        const text = (word.text || "").trim();
-        if (!text) continue;
-
-        const previous = deduped.at(-1);
-        const start = word.timestamp[0];
-
-        if (
-            previous &&
-            Math.abs(start - previous.timestamp[0]) < 0.45 &&
-            cleanText(previous.text).toLowerCase() === cleanText(text).toLowerCase()
-        ) {
-            previous.timestamp[1] = Math.max(previous.timestamp[1], word.timestamp[1]);
-            continue;
-        }
-
-        deduped.push(word);
-    }
-
-    return { chunks: deduped };
+    setProgress(78, "Transcription complete. Preparing transcript...");
+    return { chunks };
 }
 
 async function detectSpeakers(samples) {
