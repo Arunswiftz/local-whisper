@@ -4,7 +4,8 @@ Browser-only speech-to-text using Whisper and Transformers.js.
 
 ## Link to the website
 
-arunswiftz.github.io/local-whisper/
+[local-whisper] (arunswiftz.github.io/local-whisper/)
+Address: arunswiftz.github.io/local-whisper/
 
 ## Features
 
