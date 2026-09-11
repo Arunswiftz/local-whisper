@@ -188,16 +188,10 @@ async function loadModels() {
 
     setProgress(10, `Loading Whisper Base (${device.toUpperCase()})...`);
     transcriber = await pipeline("automatic-speech-recognition", ASR_MODEL, whisperOptions);
-    setProgress(45, "Loading speaker segmentation model...");
-
-    segmentationProcessor = await AutoProcessor.from_pretrained(SEGMENTATION_MODEL);
-    segmentationModel = await AutoModelForAudioFrameClassification.from_pretrained(
-        SEGMENTATION_MODEL,
-        { device: "wasm", dtype: "fp32" }
-    );
-
+    // Speaker diarization is optional and is loaded only after Whisper succeeds.
+    // A diarization failure must never prevent the transcript from appearing.
     modelsLoaded = true;
-    setProgress(55, "Models ready.");
+    setProgress(55, "Whisper model ready.");
 }
 
 async function decodeAudio(file) {
@@ -220,29 +214,60 @@ async function decodeAudio(file) {
 }
 
 async function detectSpeakers(samples) {
-    setProgress(82, "Detecting speaker changes...");
-    const inputs = await segmentationProcessor(samples);
-    const output = await segmentationModel(inputs);
-    const segments = segmentationProcessor.post_process_speaker_diarization(output.logits, samples.length)[0];
-    const labels = segmentationModel.config.id2label || {};
+    setProgress(82, "Loading speaker detection...");
 
-    const useful = segments
-        .map(segment => ({
-            ...segment,
-            label: labels[segment.id] || segment.label || `SPEAKER_${segment.id}`
-        }))
-        .filter(segment => {
+    if (!segmentationProcessor || !segmentationModel) {
+        segmentationProcessor = await AutoProcessor.from_pretrained(SEGMENTATION_MODEL);
+        segmentationModel = await AutoModelForAudioFrameClassification.from_pretrained(
+            SEGMENTATION_MODEL,
+            { device: "wasm", dtype: "fp32" }
+        );
+    }
+
+    const SAMPLE_RATE = 16000;
+    const WINDOW_SECONDS = 30;
+    const windowSamples = WINDOW_SECONDS * SAMPLE_RATE;
+    const allSegments = [];
+
+    for (let offset = 0; offset < samples.length; offset += windowSamples) {
+        const end = Math.min(offset + windowSamples, samples.length);
+        const window = samples.slice(offset, end);
+        const inputs = await segmentationProcessor(window);
+        const output = await segmentationModel(inputs);
+        const processed =
+            segmentationProcessor.post_process_speaker_diarization(output.logits, window.length)[0] || [];
+
+        for (const segment of processed) {
             const confidence = Number(segment.confidence ?? 1);
-            return Number.isFinite(segment.start) && Number.isFinite(segment.end) &&
-                segment.end > segment.start && confidence >= SPEAKER_CONFIDENCE;
-        });
+            if (!Number.isFinite(segment.start) ||
+                !Number.isFinite(segment.end) ||
+                segment.end <= segment.start ||
+                confidence < SPEAKER_CONFIDENCE) continue;
+
+            allSegments.push({
+                ...segment,
+                start: segment.start + offset / SAMPLE_RATE,
+                end: segment.end + offset / SAMPLE_RATE,
+                label: "SPEAKER_" + segment.id
+            });
+        }
+
+        const percent = 82 + Math.round((end / samples.length) * 13);
+        setProgress(percent, "Detecting speaker changes... " +
+            Math.round((end / samples.length) * 100) + "%");
+    }
 
     const merged = [];
-    for (const segment of useful) {
+    for (const segment of allSegments) {
         const previous = merged.at(-1);
-        if (previous && previous.label === segment.label && segment.start - previous.end <= SPEAKER_MERGE_GAP) {
+        if (previous &&
+            previous.label === segment.label &&
+            segment.start - previous.end <= SPEAKER_MERGE_GAP) {
             previous.end = Math.max(previous.end, segment.end);
-            previous.confidence = Math.max(previous.confidence ?? 0, segment.confidence ?? 0);
+            previous.confidence = Math.max(
+                previous.confidence ?? 0,
+                segment.confidence ?? 0
+            );
         } else {
             merged.push({ ...segment });
         }
@@ -419,41 +444,99 @@ transcribeButton.addEventListener("click", async () => {
         transcriptionData = [];
         transcription.value = "";
 
-        const variant = ENGLISH_VARIANTS[languageSelect.value] || ENGLISH_VARIANTS["en-US"];
-        const sensitivity = SENSITIVITY[sensitivitySelect.value] || SENSITIVITY.balanced;
+        const variant =
+            ENGLISH_VARIANTS[languageSelect.value] || ENGLISH_VARIANTS["en-US"];
+        const sensitivity =
+            SENSITIVITY[sensitivitySelect.value] || SENSITIVITY.balanced;
 
         await loadModels();
         const audio = await decodeAudio(selectedFile);
 
-        setProgress(60, `Transcribing with ${variant.label} • ${sensitivity.label} capture...`);
+        setProgress(
+            60,
+            "Transcribing with " + variant.label + " • " +
+            sensitivity.label + " capture..."
+        );
+
         const result = await transcriber(audio.samples, {
             language: "english",
             task: "transcribe",
             initial_prompt: variant.prompt,
             return_timestamps: "word",
             chunk_length_s: 30,
+            stride_length_s: 5,
             no_speech_threshold: sensitivity.noSpeechThreshold,
             logprob_threshold: -1.0,
             compression_ratio_threshold: 2.4
         });
 
-        const speakerSegments = await detectSpeakers(audio.samples);
-        transcriptionData = buildTranscript(result.chunks || [], speakerSegments);
+        // Whisper is the primary operation. Show its result immediately.
+        const wordChunks = result?.chunks || [];
+
+        if (wordChunks.length) {
+            transcriptionData = buildTranscript(wordChunks, []);
+        } else if (result?.text?.trim()) {
+            const fallbackText = cleanText(result.text);
+            transcriptionData = [{
+                speaker: "Speaker 1",
+                start: 0,
+                end: audio.duration,
+                words: [{
+                    text: fallbackText,
+                    start: 0,
+                    end: audio.duration
+                }],
+                text: fallbackText
+            }];
+        }
 
         transcription.value = transcriptionData
-            .map(block => `${block.speaker}\n${block.text}`)
+            .map(block => block.speaker + "\n" + block.text)
             .join("\n\n");
 
         renderTranscript();
+        resultSection.classList.remove("hidden");
+        setProgress(78, "Transcript ready. Detecting speakers...");
+
+        // Speaker detection is best-effort. If it fails, keep the transcript.
+        try {
+            const speakerSegments = await detectSpeakers(audio.samples);
+
+            if (speakerSegments.length && wordChunks.length) {
+                transcriptionData = buildTranscript(wordChunks, speakerSegments);
+                transcription.value = transcriptionData
+                    .map(block => block.speaker + "\n" + block.text)
+                    .join("\n\n");
+                renderTranscript();
+            }
+        } catch (speakerError) {
+            console.warn(
+                "Speaker detection unavailable; keeping transcript.",
+                speakerError
+            );
+        }
+
+        const speakerCount =
+            new Set(transcriptionData.map(block => block.speaker)).size;
+
         setProgress(100, "Transcription complete.");
 
-        const speakerCount = new Set(transcriptionData.map(block => block.speaker)).size;
-        resultStatus.textContent = `Processed ${formatTime(audio.duration)} • ${speakerCount || 1} speaker(s) • ${variant.label} • ${sensitivity.label} capture`;
+        resultStatus.textContent =
+            "Processed " + formatTime(audio.duration) + " • " +
+            (speakerCount || 1) + " speaker(s) • " +
+            variant.label + " • " + sensitivity.label + " capture";
+
         resultSection.classList.remove("hidden");
     } catch (error) {
         console.error("TRANSCRIPTION ERROR:", error);
         setProgress(0, "Transcription failed.");
-        alert(`Transcription failed:\n\n${error?.message || error}`);
+        resultSection.classList.add("hidden");
+
+        alert(
+            "Transcription failed:\n\n" +
+            (error?.message || error) +
+            "\n\nIf this is the first run, make sure the browser can download the Whisper model."
+        );
     } finally {
         transcribeButton.disabled = !selectedFile;
     }
