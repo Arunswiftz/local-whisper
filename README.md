@@ -2,6 +2,10 @@
 
 Browser-only speech-to-text using Whisper and Transformers.js.
 
+## Link to the website
+
+arunswiftz.github.io/local-whisper/
+
 ## Features
 
 - Local browser inference; audio is not uploaded to a transcription server.
